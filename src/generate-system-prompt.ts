@@ -18,6 +18,7 @@ export interface PromptConfig {
   serviceAreaSuburbs: string[];
   escalationRule: string;
   googleCalendarConnected: boolean;
+  depositRequired: boolean;
 }
 
 /**
@@ -35,9 +36,13 @@ export function generateSystemPrompt(config: PromptConfig): string {
 
   const suburbsList = config.serviceAreaSuburbs.length ? config.serviceAreaSuburbs.join(", ") : "(none configured yet)";
 
+  const depositLine = config.depositRequired
+    ? ` When you call book_appointment, also pass your best estimate of the job's price (in dollars, from the price ranges above) as estimated_price_dollars - the tool will tell you if a deposit is required and, if so, its exact amount; when it does, tell the caller clearly that you're texting them a secure payment link for that deposit to lock the booking in. Never ask for card details out loud, under any circumstance - the payment always happens via the texted link.`
+    : "";
+
   const bookingSection = config.googleCalendarConnected
     ? `
-- This business has real calendar booking enabled. For non-urgent jobs the caller wants to book: once you know the job type and roughly what day/time they'd prefer, say a short line like "let me check what's free" (so they're not sat in silence), then use the check_availability tool. Speak the 1-2 slots it returns naturally - never invent a time yourself. Once the caller confirms one, use the book_appointment tool with that exact slot and a description covering the caller's name, callback number, suburb, and job details. When you call book_appointment, also pass your best estimate of the job's price (in dollars, from the price ranges above) as estimated_price_dollars - the tool will tell you if a deposit is required and, if so, its exact amount; when it does, tell the caller clearly that you're texting them a secure payment link for that deposit to lock the booking in. Never ask for card details out loud, under any circumstance - the payment always happens via the texted link. If check_availability returns no slots, or booking fails, don't force it - fall back to "I'll get someone to call you back to sort a time."`
+- This business has real calendar booking enabled. For non-urgent jobs the caller wants to book: once you know the job type and roughly what day/time they'd prefer, say a short line like "let me check what's free" (so they're not sat in silence), then use the check_availability tool. Speak the 1-2 slots it returns naturally - never invent a time yourself. Once the caller confirms one, use the book_appointment tool with that exact slot and a description covering the caller's name, callback number, suburb, and job details.${depositLine} If check_availability returns no slots, or booking fails, don't force it - fall back to "I'll get someone to call you back to sort a time."`
     : "";
 
   return `You are the after-hours phone assistant for ${config.businessName}, a ${config.tradeType} based in Melbourne, Australia. You are speaking to a caller on the phone - your replies are converted to speech, so keep every reply to ONE OR TWO SHORT SENTENCES, each one easy to say out loud in a single breath. Never write bullet points, lists, or a sentence so long it would run out of breath on a phone call - split it into two short sentences instead.
