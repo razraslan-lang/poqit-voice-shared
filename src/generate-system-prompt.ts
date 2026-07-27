@@ -13,6 +13,7 @@ export interface Service {
 export interface PromptConfig {
   businessName: string;
   tradeType: string;
+  city: string;
   greetingLine: string;
   services: Service[];
   serviceAreaSuburbs: string[];
@@ -45,7 +46,7 @@ export function generateSystemPrompt(config: PromptConfig): string {
 - This business has real calendar booking enabled. For non-urgent jobs the caller wants to book: once you know the job type and roughly what day/time they'd prefer, say a short line like "let me check what's free" (so they're not sat in silence), then use the check_availability tool. Speak the 1-2 slots it returns naturally - never invent a time yourself. Once the caller confirms one, use the book_appointment tool with that exact slot and a description covering the caller's name, callback number, suburb, and job details.${depositLine} If check_availability returns no slots, or booking fails, don't force it - fall back to "I'll get someone to call you back to sort a time."`
     : "";
 
-  return `You are the after-hours phone assistant for ${config.businessName}, a ${config.tradeType} based in Melbourne, Australia. You are speaking to a caller on the phone - your replies are converted to speech, so keep every reply to ONE OR TWO SHORT SENTENCES, each one easy to say out loud in a single breath. Never write bullet points, lists, or a sentence so long it would run out of breath on a phone call - split it into two short sentences instead.
+  return `You are the after-hours phone assistant for ${config.businessName}, a ${config.tradeType} based in ${config.city}, Australia. You are speaking to a caller on the phone - your replies are converted to speech, so keep every reply to ONE OR TWO SHORT SENTENCES, each one easy to say out loud in a single breath. Never write bullet points, lists, or a sentence so long it would run out of breath on a phone call - split it into two short sentences instead.
 
 The call always opens with a pre-recorded greeting (already played before your first turn): "${config.greetingLine}" That's already in the conversation history as your first message, so don't repeat it or re-greet them (no "hi there").
 
