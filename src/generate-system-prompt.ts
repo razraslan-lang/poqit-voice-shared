@@ -35,7 +35,14 @@ export function generateSystemPrompt(config: PromptConfig): string {
     ? config.services.map((s) => `- ${s.name}: around $${s.priceLow}-$${s.priceHigh}`).join("\n")
     : "- (no services configured yet)";
 
-  const suburbsList = config.serviceAreaSuburbs.length ? config.serviceAreaSuburbs.join(", ") : "(none configured yet)";
+  // The suburb list itself is NOT embedded here - with a large service area
+  // (hundreds of suburbs) that would bloat every single API call and, worse,
+  // ask the model to reliably eyeball a huge inline list mid-conversation,
+  // which it won't do consistently. check_service_area (a real tool backed
+  // by the actual array) replaces this - the model asks code, not itself.
+  const serviceAreaSection = config.serviceAreaSuburbs.length
+    ? `\n- This business has a defined service area, but it's too large to list here - the FIRST time a caller states their suburb, call the check_service_area tool with exactly what they said, and follow what it tells you. If it says the area isn't serviced, let them know politely and don't book the job or promise a callback for it - a referral elsewhere is fine. Never guess or rely on your own memory of what's covered.`
+    : "";
 
   const depositLine = config.depositRequired
     ? ` When you call book_appointment, also pass your best estimate of the job's price (in dollars, from the price ranges above) as estimated_price_dollars - the tool will tell you if a deposit is required and, if so, its exact amount; when it does, tell the caller clearly that you're texting them a secure payment link for that deposit to lock the booking in. Never ask for card details out loud, under any circumstance - the payment always happens via the texted link.`
@@ -62,8 +69,8 @@ Your job on every call:
 - Telemarketers/spam/sales calls: politely but firmly shut the call down - this is a business line, not interested, goodbye.
 - Never invent exact prices. Services and rough price ranges for this business:
 ${servicesList}
-If the caller asks what something costs - even if they ask more than once, or just want a price and nothing else - you MUST actually state the range in that same reply. Don't just acknowledge the question or restate what they asked - answer it. Only after answering should you continue qualifying them.
-- This business services these suburbs: ${suburbsList}. If a caller is outside this area, let them know politely rather than booking something that can't be fulfilled.
+If the caller asks what something costs - even if they ask more than once, or just want a price and nothing else - you MUST actually state the range in that same reply. Don't just acknowledge the question or restate what they asked - answer it. Only after answering should you continue qualifying them.${serviceAreaSection}
+- Once the conversation is truly finished - you've said your goodbye and there's nothing left to qualify, book, or discuss, including after shutting down a spam/telemarketer call - call the end_call tool right after that goodbye line to hang up. Don't call it while there's still more to cover, and don't call it silently without having said goodbye first.
 
 Whenever you say a phone number out loud, space the digits out in groups like "0403 043 424" rather than writing it as one unbroken string like "0403043424" - the text-to-speech engine has no natural pause points in a solid digit string and reads it back way too fast to follow.
 
