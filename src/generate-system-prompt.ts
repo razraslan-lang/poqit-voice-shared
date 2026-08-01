@@ -85,34 +85,47 @@ export function generateSystemPrompt(config: PromptConfig): string {
     ? ` When you call book_appointment, also pass your best estimate of the job's price (in dollars, from the price ranges above) as estimated_price_dollars - the tool will tell you if a deposit is required and, if so, its exact amount; when it does, tell the caller clearly that you're texting them a secure payment link for that deposit to lock the booking in. Never ask for card details out loud, under any circumstance - the payment always happens via the texted link.`
     : "";
 
-  const bookingSection = config.googleCalendarConnected
-    ? `
-- This business has real calendar booking enabled. For non-urgent jobs the caller wants to book: once you know the job type and roughly what day/time they'd prefer, say a short line like "let me check what's free" (so they're not sat in silence), then use the check_availability tool. Speak the 1-2 slots it returns naturally - never invent a time yourself. Once the caller confirms one, use the book_appointment tool with that exact slot and a description covering the caller's name, callback number, suburb, and job details.${depositLine} If check_availability returns no slots, or booking fails, don't force it - fall back to "I'll get someone to call you back to sort a time."`
-    : "";
-
   // Not phonetically perfect (e.g. "an hour" vs "a university") but covers
   // real trade types fine - cheap heuristic, not worth a full CMU-dict-style
   // pronunciation lookup for this.
   const article = /^[aeiou]/i.test(config.tradeType) ? "an" : "a";
 
-  // Phase 3 Section 2: the actual consent script and trigger condition are
-  // built server-side so the model never has to judge "is it fully booked"
-  // or "is it after-hours" itself - it just follows what's already true.
-  // Deliberately vague on dates ("fully booked right now", not "until
-  // [date]") rather than asking the model to name a specific date here -
-  // Fix 4's live testing already showed date arithmetic in freeform prose
-  // is unreliable; check_availability's real slots are the only place a
-  // specific date should ever come from.
-  let overflowCondition: string | null = null;
-  if (config.offerReferralWhenAfterHours && config.offerReferralWhenFullyBooked) {
-    overflowCondition = `it's currently after ${config.businessName}'s hours, or if check_availability comes back with no slots`;
-  } else if (config.offerReferralWhenAfterHours) {
-    overflowCondition = `it's currently after ${config.businessName}'s hours`;
-  } else if (config.offerReferralWhenFullyBooked) {
-    overflowCondition = `check_availability comes back with no slots`;
-  }
-  const overflowSection = overflowCondition
-    ? `\n- Overflow referral is enabled for this business. If ${overflowCondition}: before falling back to just taking a message, tell the caller ${config.businessName} can't get to it right now, then ask "if it can't wait, I can check whether another verified local ${config.tradeType} can take it - would you like me to do that?" If they say yes: confirm their best callback number, then call the offer_overflow_referral tool with consent_granted set to true and the job type, suburb, and urgency. Right after that tool call, tell them clearly "I'll have someone call you within about 10 minutes if a tradie's available - if not, I'll let you know either way," say goodbye, and end the call - don't keep qualifying further once they've agreed. If they say no: call offer_overflow_referral with consent_granted set to false, and continue exactly as you normally would (offer to take a message).`
+  // Phase 3 Section 2. The two triggers gate DIFFERENT points in the flow,
+  // not the same fallback line - found live-testing the first version of
+  // this, which OR'd both conditions into one shared fallback after
+  // check_availability returns empty. That never fires when real slots
+  // exist, so a business with after-hours overflow enabled just booked
+  // normally through the night regardless. Per the spec, after-hours is a
+  // POLICY reason booking counts as "failed" - the owner doesn't want
+  // bookings made automatically after hours, independent of what the
+  // calendar actually shows - so it has to preempt the booking attempt
+  // entirely, not just extend its failure message.
+  const afterHoursOverflow = Boolean(config.offerReferralWhenAfterHours);
+  const fullyBookedOverflow = Boolean(config.offerReferralWhenFullyBooked);
+
+  // Shared consent script, used identically from both trigger points so
+  // there's exactly one place this wording can drift out of sync.
+  const overflowConsentScript = `ask "if it can't wait, I can check whether another verified local ${config.tradeType} can take it - would you like me to do that?" If they say yes: confirm their best callback number, then call the offer_overflow_referral tool with consent_granted set to true and the job type, suburb, and urgency. Right after that tool call, tell them clearly "I'll have someone call you within about 10 minutes if a tradie's available - if not, I'll let you know either way," say goodbye, and end the call - don't keep qualifying further once they've agreed. If they say no: call offer_overflow_referral with consent_granted set to false, and continue exactly as you normally would.`;
+
+  // Booking is suppressed (not just given an extra fallback) when
+  // after-hours overflow is active - real availability is irrelevant in
+  // that case, by policy.
+  const bookingSection =
+    config.googleCalendarConnected && !afterHoursOverflow
+      ? `
+- This business has real calendar booking enabled. For non-urgent jobs the caller wants to book: once you know the job type and roughly what day/time they'd prefer, say a short line like "let me check what's free" (so they're not sat in silence), then use the check_availability tool. Speak the 1-2 slots it returns naturally - never invent a time yourself. Once the caller confirms one, use the book_appointment tool with that exact slot and a description covering the caller's name, callback number, suburb, and job details.${depositLine} If check_availability returns no slots, or booking fails: ${
+          fullyBookedOverflow
+            ? `before falling back to just taking a message, tell the caller ${config.businessName} is fully booked right now, then ${overflowConsentScript}`
+            : `don't force it - fall back to "I'll get someone to call you back to sort a time."`
+        }`
+      : "";
+
+  // Fires BEFORE any booking attempt, calendar-connected or not - this is
+  // what actually preempts the normal "pencil it in" instruction below when
+  // it's currently outside business hours and this business's owner has
+  // said overflow should apply regardless of real availability.
+  const afterHoursOverflowSection = afterHoursOverflow
+    ? ` However, it's currently after ${config.businessName}'s hours, and this business doesn't book non-urgent jobs automatically after hours - ignore the "pencil it in" instruction above, don't check availability, and don't offer to book anything. Instead, tell the caller ${config.businessName} can't get to it right now, then ${overflowConsentScript}`
     : "";
 
   const upcomingDatesLine = config.upcomingDates ? ` The next 7 days are: ${config.upcomingDates}.` : "";
@@ -128,7 +141,7 @@ Your job on every call:
 - Qualify the caller: after their name and problem, get a callback number, their suburb, and how urgent it is (emergency vs can-wait). Ask for these naturally, one or two things at a time - don't interrogate them in one breath.
 - Phone transcription of names is unreliable, especially when a caller spells one out letter by letter. If a caller corrects how you've said their name more than once, stop confidently restating it as fixed - instead say what you now believe it is and explicitly ask "did I get that right?" rather than declaring it correct unprompted. Getting it wrong twice while sounding certain is worse than asking once.
 - Emergency rule for this business: ${config.escalationRule}. Treat anything matching this with urgency. As soon as you have a callback number, say "someone will call you back within 15 minutes" (or very close wording) - say this BEFORE asking any further troubleshooting or triage questions. Reassurance comes first, extra questions come after.
-- Quotes / non-urgent jobs: capture the details, then offer to book them in - ask what day/time works and say you'll pencil it in, without inventing a specific available slot (that's confirmed separately, not by you guessing).${bookingSection}${overflowSection}
+- Quotes / non-urgent jobs: capture the details, then offer to book them in - ask what day/time works and say you'll pencil it in, without inventing a specific available slot (that's confirmed separately, not by you guessing).${afterHoursOverflowSection}${bookingSection}
 - Telemarketers/spam/sales calls: politely but firmly shut the call down - this is a business line, not interested, goodbye.
 - Never invent exact prices. Services and rough price ranges for this business:
 ${servicesList}
