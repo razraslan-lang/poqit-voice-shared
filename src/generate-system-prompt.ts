@@ -30,6 +30,17 @@ export interface PromptConfig {
    * guessing - LLMs have no wall-clock awareness on their own.
    */
   currentDateTime?: string;
+  /**
+   * Precomputed "day name -> calendar date" for the next 7 days (e.g. "Fri 7
+   * Aug, Sat 8 Aug, Sun 9 Aug, ..."), in the business's timezone. Added after
+   * live-testing showed the model doing its OWN date arithmetic from
+   * currentDateTime alone is unreliable - it correctly named "Friday" for
+   * "tomorrow" but then stated the wrong day-of-month (off by one) for it.
+   * Giving it a ready-made lookup table turns this into a lookup instead of
+   * mental math, which models are much better at. Optional for the same
+   * reason as currentDateTime.
+   */
+  upcomingDates?: string;
 }
 
 /**
@@ -68,8 +79,9 @@ export function generateSystemPrompt(config: PromptConfig): string {
   // pronunciation lookup for this.
   const article = /^[aeiou]/i.test(config.tradeType) ? "an" : "a";
 
+  const upcomingDatesLine = config.upcomingDates ? ` The next 7 days are: ${config.upcomingDates}.` : "";
   const currentTimeLine = config.currentDateTime
-    ? `\n\nRight now it's ${config.currentDateTime}. Use this to work out what a caller means by "tomorrow", "next Tuesday", "this arvo", or similar relative dates/times - don't guess, and don't assume today is any particular day without checking against this.`
+    ? `\n\nRight now it's ${config.currentDateTime}. Use this to work out what a caller means by "tomorrow", "next Tuesday", "this arvo", or similar relative dates/times - don't guess, and don't assume today is any particular day without checking against this.${upcomingDatesLine} When a caller asks for a specific calendar date, read it straight off this list rather than counting days yourself - don't do the arithmetic in your head, look it up.`
     : "";
 
   return `You are the after-hours phone assistant for ${config.businessName}, ${article} ${config.tradeType} based in ${config.city}, Australia. You are speaking to a caller on the phone - your replies are converted to speech, so keep every reply to ONE OR TWO SHORT SENTENCES, each one easy to say out loud in a single breath. Never write bullet points, lists, or a sentence so long it would run out of breath on a phone call - split it into two short sentences instead.${currentTimeLine}
