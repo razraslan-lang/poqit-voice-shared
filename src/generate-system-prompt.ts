@@ -104,8 +104,11 @@ export function generateSystemPrompt(config: PromptConfig): string {
   const fullyBookedOverflow = Boolean(config.offerReferralWhenFullyBooked);
 
   // Shared consent script, used identically from both trigger points so
-  // there's exactly one place this wording can drift out of sync.
-  const overflowConsentScript = `ask "if it can't wait, I can check whether another verified local ${config.tradeType} can take it - would you like me to do that?" If they say yes: confirm their best callback number, then call the offer_overflow_referral tool with consent_granted set to true and the job type, suburb, and urgency. Right after that tool call, tell them clearly "I'll have someone call you within about 10 minutes if a tradie's available - if not, I'll let you know either way," say goodbye, and end the call - don't keep qualifying further once they've agreed. If they say no: call offer_overflow_referral with consent_granted set to false, and continue exactly as you normally would.`;
+  // there's exactly one place this wording can drift out of sync. Captures
+  // suburb here too (not just callback number) - for the after-hours path
+  // this now runs BEFORE the normal qualification bullet gets there, so
+  // suburb hasn't necessarily been captured yet either.
+  const overflowConsentScript = `ask "if it can't wait, I can check whether another verified local ${config.tradeType} can take it - would you like me to do that?" If they say yes: get their suburb and confirm their best callback number if you don't have them yet, then call the offer_overflow_referral tool with consent_granted set to true and the job type, suburb, and urgency. Right after that tool call, tell them clearly "I'll have someone call you within about 10 minutes if a tradie's available - if not, I'll let you know either way," say goodbye, and end the call - don't keep qualifying further once they've agreed. If they say no: call offer_overflow_referral with consent_granted set to false, then continue with the normal qualification (callback number, suburb, urgency) and take a message.`;
 
   // Booking is suppressed (not just given an extra fallback) when
   // after-hours overflow is active - real availability is irrelevant in
@@ -120,12 +123,20 @@ export function generateSystemPrompt(config: PromptConfig): string {
         }`
       : "";
 
-  // Fires BEFORE any booking attempt, calendar-connected or not - this is
-  // what actually preempts the normal "pencil it in" instruction below when
-  // it's currently outside business hours and this business's owner has
-  // said overflow should apply regardless of real availability.
+  // Fires as its own early, high-priority bullet - not buried inside the
+  // "Quotes / non-urgent jobs" bullet, which only gets reached after the
+  // FULL qualify sequence (name, problem, callback number, suburb,
+  // urgency) finishes. Found live-testing the previous version: a real
+  // caller sat through the whole qualify interview - name, number, suburb,
+  // urgency - a minute or two of questions - before finally being told the
+  // business was unavailable. If a business can't take the job at all,
+  // that has to come immediately after establishing it's not an emergency,
+  // not after collecting details that mostly turn out to be pointless.
   const afterHoursOverflowSection = afterHoursOverflow
-    ? ` However, it's currently after ${config.businessName}'s hours, and this business doesn't book non-urgent jobs automatically after hours - ignore the "pencil it in" instruction above, don't check availability, and don't offer to book anything. Instead, tell the caller ${config.businessName} can't get to it right now, then ${overflowConsentScript}`
+    ? `\n- It's currently after ${config.businessName}'s hours, and this business doesn't book non-urgent jobs automatically after hours - real availability doesn't matter here. As soon as you know the caller's name, roughly what the problem is, and that it's NOT an emergency (see the escalation rule above - emergencies still get that treatment first), stop there - do NOT continue asking for their callback number, suburb, or urgency yet. Immediately tell them ${config.businessName} can't get to it right now, then ${overflowConsentScript}`
+    : "";
+  const afterHoursQualifyException = afterHoursOverflow
+    ? ` Exception: if it's currently after hours and this doesn't match the emergency rule below, stop after getting their name and problem - don't ask for callback number, suburb, or urgency yet, skip straight to telling them the business is unavailable right now (see the after-hours bullet below).`
     : "";
 
   const upcomingDatesLine = config.upcomingDates ? ` The next 7 days are: ${config.upcomingDates}.` : "";
@@ -138,10 +149,10 @@ export function generateSystemPrompt(config: PromptConfig): string {
 The call always opens with a pre-recorded greeting (already played before your first turn): "${config.greetingLine}" That's already in the conversation history as your first message, so don't repeat it or re-greet them (no "hi there").
 
 Your job on every call:
-- Qualify the caller: after their name and problem, get a callback number, their suburb, and how urgent it is (emergency vs can-wait). Ask for these naturally, one or two things at a time - don't interrogate them in one breath.
+- Qualify the caller: after their name and problem, get a callback number, their suburb, and how urgent it is (emergency vs can-wait). Ask for these naturally, one or two things at a time - don't interrogate them in one breath.${afterHoursQualifyException}
 - Phone transcription of names is unreliable, especially when a caller spells one out letter by letter. If a caller corrects how you've said their name more than once, stop confidently restating it as fixed - instead say what you now believe it is and explicitly ask "did I get that right?" rather than declaring it correct unprompted. Getting it wrong twice while sounding certain is worse than asking once.
-- Emergency rule for this business: ${config.escalationRule}. Treat anything matching this with urgency. As soon as you have a callback number, say "someone will call you back within 15 minutes" (or very close wording) - say this BEFORE asking any further troubleshooting or triage questions. Reassurance comes first, extra questions come after.
-- Quotes / non-urgent jobs: capture the details, then offer to book them in - ask what day/time works and say you'll pencil it in, without inventing a specific available slot (that's confirmed separately, not by you guessing).${afterHoursOverflowSection}${bookingSection}
+- Emergency rule for this business: ${config.escalationRule}. Treat anything matching this with urgency. As soon as you have a callback number, say "someone will call you back within 15 minutes" (or very close wording) - say this BEFORE asking any further troubleshooting or triage questions. Reassurance comes first, extra questions come after.${afterHoursOverflowSection}
+- Quotes / non-urgent jobs: capture the details, then offer to book them in - ask what day/time works and say you'll pencil it in, without inventing a specific available slot (that's confirmed separately, not by you guessing).${bookingSection}
 - Telemarketers/spam/sales calls: politely but firmly shut the call down - this is a business line, not interested, goodbye.
 - Never invent exact prices. Services and rough price ranges for this business:
 ${servicesList}
