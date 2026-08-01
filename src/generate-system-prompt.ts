@@ -41,6 +41,22 @@ export interface PromptConfig {
    * reason as currentDateTime.
    */
   upcomingDates?: string;
+  /**
+   * Phase 3 Section 2: true only when this business's network_profile has
+   * overflow enabled AND the after-hours trigger is on AND it's actually
+   * after-hours right now (computed server-side, not something the model
+   * decides). Independent of googleCalendarConnected - after-hours overflow
+   * doesn't require a calendar to be meaningful.
+   */
+  offerReferralWhenAfterHours?: boolean;
+  /**
+   * Phase 3 Section 2: true only when overflow is enabled AND the
+   * fully-booked trigger is on AND this business has calendar booking
+   * connected (no calendar = no signal to detect "fully booked" from).
+   * Whether it's ACTUALLY fully booked isn't known until check_availability
+   * runs live during the call - this flag just says the trigger applies.
+   */
+  offerReferralWhenFullyBooked?: boolean;
 }
 
 /**
@@ -79,6 +95,26 @@ export function generateSystemPrompt(config: PromptConfig): string {
   // pronunciation lookup for this.
   const article = /^[aeiou]/i.test(config.tradeType) ? "an" : "a";
 
+  // Phase 3 Section 2: the actual consent script and trigger condition are
+  // built server-side so the model never has to judge "is it fully booked"
+  // or "is it after-hours" itself - it just follows what's already true.
+  // Deliberately vague on dates ("fully booked right now", not "until
+  // [date]") rather than asking the model to name a specific date here -
+  // Fix 4's live testing already showed date arithmetic in freeform prose
+  // is unreliable; check_availability's real slots are the only place a
+  // specific date should ever come from.
+  let overflowCondition: string | null = null;
+  if (config.offerReferralWhenAfterHours && config.offerReferralWhenFullyBooked) {
+    overflowCondition = `it's currently after ${config.businessName}'s hours, or if check_availability comes back with no slots`;
+  } else if (config.offerReferralWhenAfterHours) {
+    overflowCondition = `it's currently after ${config.businessName}'s hours`;
+  } else if (config.offerReferralWhenFullyBooked) {
+    overflowCondition = `check_availability comes back with no slots`;
+  }
+  const overflowSection = overflowCondition
+    ? `\n- Overflow referral is enabled for this business. If ${overflowCondition}: before falling back to just taking a message, tell the caller ${config.businessName} can't get to it right now, then ask "if it can't wait, I can check whether another verified local ${article} ${config.tradeType} can take it - would you like me to do that?" If they say yes: confirm their best callback number, then call the offer_overflow_referral tool with consent_granted set to true and the job type, suburb, and urgency. Right after that tool call, tell them clearly "I'll have someone call you within about 10 minutes if a tradie's available - if not, I'll let you know either way," say goodbye, and end the call - don't keep qualifying further once they've agreed. If they say no: call offer_overflow_referral with consent_granted set to false, and continue exactly as you normally would (offer to take a message).`
+    : "";
+
   const upcomingDatesLine = config.upcomingDates ? ` The next 7 days are: ${config.upcomingDates}.` : "";
   const currentTimeLine = config.currentDateTime
     ? `\n\nRight now it's ${config.currentDateTime}. Use this to work out what a caller means by "tomorrow", "next Tuesday", "this arvo", or similar relative dates/times - don't guess, and don't assume today is any particular day without checking against this.${upcomingDatesLine} When a caller asks for a specific calendar date, read it straight off this list rather than counting days yourself - don't do the arithmetic in your head, look it up.`
@@ -92,7 +128,7 @@ Your job on every call:
 - Qualify the caller: after their name and problem, get a callback number, their suburb, and how urgent it is (emergency vs can-wait). Ask for these naturally, one or two things at a time - don't interrogate them in one breath.
 - Phone transcription of names is unreliable, especially when a caller spells one out letter by letter. If a caller corrects how you've said their name more than once, stop confidently restating it as fixed - instead say what you now believe it is and explicitly ask "did I get that right?" rather than declaring it correct unprompted. Getting it wrong twice while sounding certain is worse than asking once.
 - Emergency rule for this business: ${config.escalationRule}. Treat anything matching this with urgency. As soon as you have a callback number, say "someone will call you back within 15 minutes" (or very close wording) - say this BEFORE asking any further troubleshooting or triage questions. Reassurance comes first, extra questions come after.
-- Quotes / non-urgent jobs: capture the details, then offer to book them in - ask what day/time works and say you'll pencil it in, without inventing a specific available slot (that's confirmed separately, not by you guessing).${bookingSection}
+- Quotes / non-urgent jobs: capture the details, then offer to book them in - ask what day/time works and say you'll pencil it in, without inventing a specific available slot (that's confirmed separately, not by you guessing).${bookingSection}${overflowSection}
 - Telemarketers/spam/sales calls: politely but firmly shut the call down - this is a business line, not interested, goodbye.
 - Never invent exact prices. Services and rough price ranges for this business:
 ${servicesList}
