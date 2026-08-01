@@ -132,12 +132,32 @@ export function generateSystemPrompt(config: PromptConfig): string {
   // business was unavailable. If a business can't take the job at all,
   // that has to come immediately after establishing it's not an emergency,
   // not after collecting details that mostly turn out to be pointless.
+  //
+  // Explicitly covers the caller-volunteers-everything-at-once case too -
+  // found in a second round of live testing: a caller who stated suburb
+  // and a preferred day/time unprompted, in the same breath as their name
+  // and problem, still got a verbal "I'll pencil you in for Monday at 2pm"
+  // - not from book_appointment (that's structurally blocked and correctly
+  // never fired), but from the model just following the generic "pencil it
+  // in" promise in the Quotes/non-urgent bullet below, which was still
+  // unconditional. A caller volunteering details early must not change the
+  // outcome - the closed message is still the very next thing said.
   const afterHoursOverflowSection = afterHoursOverflow
-    ? `\n- It's currently after ${config.businessName}'s hours, and this business doesn't book non-urgent jobs automatically after hours - real availability doesn't matter here. As soon as you know the caller's name, roughly what the problem is, and that it's NOT an emergency (see the escalation rule above - emergencies still get that treatment first), stop there - do NOT continue asking for their callback number, suburb, or urgency yet. Immediately tell them ${config.businessName} can't get to it right now, then ${overflowConsentScript}`
+    ? `\n- It's currently after ${config.businessName}'s hours, and this business doesn't book non-urgent jobs automatically after hours - real availability doesn't matter here. As soon as you know the caller's name, roughly what the problem is, and that it's NOT an emergency (see the escalation rule above - emergencies still get that treatment first), stop there - do NOT continue asking for their callback number, suburb, or urgency yet, even if they've already volunteered a suburb, a preferred day/time, or other scheduling details unprompted in the same breath. Do not acknowledge or engage with any of that, and never say anything like "pencil you in" or repeat back a day/time - regardless of what they've already told you, your very next reply must be telling them ${config.businessName} can't get to it right now, then ${overflowConsentScript}`
     : "";
   const afterHoursQualifyException = afterHoursOverflow
-    ? ` Exception: if it's currently after hours and this doesn't match the emergency rule below, stop after getting their name and problem - don't ask for callback number, suburb, or urgency yet, skip straight to telling them the business is unavailable right now (see the after-hours bullet below).`
+    ? ` Exception: if it's currently after hours and this doesn't match the emergency rule below, stop after getting their name and problem - don't ask for callback number, suburb, or urgency yet (even if they already volunteered some of it unprompted), skip straight to telling them the business is unavailable right now (see the after-hours bullet below).`
     : "";
+
+  // The base "pencil it in" promise is itself unconditional text that
+  // directly contradicts the after-hours bullet above - found in the same
+  // round of live testing, the model followed THIS sentence's "offer to
+  // book them in... say you'll pencil it in" instead of the closed message,
+  // even with book_appointment correctly unavailable. Suppressing only
+  // bookingSection wasn't enough; this base sentence needed gating too.
+  const quotesBullet = afterHoursOverflow
+    ? `- Quotes / non-urgent jobs: not applicable right now - see the after-hours bullet above, which fully replaces this one while it's after hours.`
+    : `- Quotes / non-urgent jobs: capture the details, then offer to book them in - ask what day/time works and say you'll pencil it in, without inventing a specific available slot (that's confirmed separately, not by you guessing).${bookingSection}`;
 
   const upcomingDatesLine = config.upcomingDates ? ` The next 7 days are: ${config.upcomingDates}.` : "";
   const currentTimeLine = config.currentDateTime
@@ -152,7 +172,7 @@ Your job on every call:
 - Qualify the caller: after their name and problem, get a callback number, their suburb, and how urgent it is (emergency vs can-wait). Ask for these naturally, one or two things at a time - don't interrogate them in one breath.${afterHoursQualifyException}
 - Phone transcription of names is unreliable, especially when a caller spells one out letter by letter. If a caller corrects how you've said their name more than once, stop confidently restating it as fixed - instead say what you now believe it is and explicitly ask "did I get that right?" rather than declaring it correct unprompted. Getting it wrong twice while sounding certain is worse than asking once.
 - Emergency rule for this business: ${config.escalationRule}. Treat anything matching this with urgency. As soon as you have a callback number, say "someone will call you back within 15 minutes" (or very close wording) - say this BEFORE asking any further troubleshooting or triage questions. Reassurance comes first, extra questions come after.${afterHoursOverflowSection}
-- Quotes / non-urgent jobs: capture the details, then offer to book them in - ask what day/time works and say you'll pencil it in, without inventing a specific available slot (that's confirmed separately, not by you guessing).${bookingSection}
+${quotesBullet}
 - Telemarketers/spam/sales calls: politely but firmly shut the call down - this is a business line, not interested, goodbye.
 - Never invent exact prices. Services and rough price ranges for this business:
 ${servicesList}
