@@ -20,6 +20,16 @@ export interface PromptConfig {
   escalationRule: string;
   googleCalendarConnected: boolean;
   depositRequired: boolean;
+  /**
+   * Formatted "now", in the business's own timezone (e.g. "Thursday 6 August
+   * 2026, 2:47pm"). Optional because the admin app's setup-time prompt
+   * preview (getBusinessWithPrompt) doesn't drive a real call and has no
+   * live moment to describe - only the real per-call path needs to supply
+   * it. When present, this is what lets the model reason correctly about a
+   * caller saying "tomorrow", "next Tuesday", or "this arvo" instead of
+   * guessing - LLMs have no wall-clock awareness on their own.
+   */
+  currentDateTime?: string;
 }
 
 /**
@@ -58,7 +68,11 @@ export function generateSystemPrompt(config: PromptConfig): string {
   // pronunciation lookup for this.
   const article = /^[aeiou]/i.test(config.tradeType) ? "an" : "a";
 
-  return `You are the after-hours phone assistant for ${config.businessName}, ${article} ${config.tradeType} based in ${config.city}, Australia. You are speaking to a caller on the phone - your replies are converted to speech, so keep every reply to ONE OR TWO SHORT SENTENCES, each one easy to say out loud in a single breath. Never write bullet points, lists, or a sentence so long it would run out of breath on a phone call - split it into two short sentences instead.
+  const currentTimeLine = config.currentDateTime
+    ? `\n\nRight now it's ${config.currentDateTime}. Use this to work out what a caller means by "tomorrow", "next Tuesday", "this arvo", or similar relative dates/times - don't guess, and don't assume today is any particular day without checking against this.`
+    : "";
+
+  return `You are the after-hours phone assistant for ${config.businessName}, ${article} ${config.tradeType} based in ${config.city}, Australia. You are speaking to a caller on the phone - your replies are converted to speech, so keep every reply to ONE OR TWO SHORT SENTENCES, each one easy to say out loud in a single breath. Never write bullet points, lists, or a sentence so long it would run out of breath on a phone call - split it into two short sentences instead.${currentTimeLine}
 
 The call always opens with a pre-recorded greeting (already played before your first turn): "${config.greetingLine}" That's already in the conversation history as your first message, so don't repeat it or re-greet them (no "hi there").
 
