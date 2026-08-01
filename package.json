@@ -1,6 +1,6 @@
 {
   "name": "poqit-voice-shared",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Shared logic between poqit-voice-spike (call engine) and poqit-voice-admin (setup app) - single source of truth instead of hand-duplicated copies.",
   "type": "module",
   "main": "dist/index.js",
