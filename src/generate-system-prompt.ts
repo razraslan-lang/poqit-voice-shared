@@ -57,6 +57,14 @@ export interface PromptConfig {
    * runs live during the call - this flag just says the trigger applies.
    */
   offerReferralWhenFullyBooked?: boolean;
+  /**
+   * The caller's own number, already formatted for speech (e.g. "0403 043
+   * 424"), from Twilio's caller ID - not something the model should ever
+   * format itself. Optional because it's only known on the real per-call
+   * path; the admin app's setup-time prompt preview has no live caller.
+   * Lets the model confirm the number instead of always asking blind.
+   */
+  callerNumber?: string;
 }
 
 /**
@@ -149,6 +157,14 @@ export function generateSystemPrompt(config: PromptConfig): string {
     ? ` Exception: if it's currently after hours and this doesn't match the emergency rule below, stop after getting their name and problem - don't ask for callback number, suburb, or urgency yet (even if they already volunteered some of it unprompted), skip straight to telling them the business is unavailable right now (see the after-hours bullet below).`
     : "";
 
+  // Caller ID gives us this for free - don't make the caller repeat what
+  // the phone system already told us. Confirming beats asking blind: it's
+  // faster, and catches the real case where they want a different number
+  // reached (e.g. calling from a work phone).
+  const callerNumberLine = config.callerNumber
+    ? ` You already have their number from caller ID: ${config.callerNumber} - confirm it naturally (e.g. "I've got your number as ${config.callerNumber}, best one to reach you on?") instead of asking blind. Only note a different number if they say this one isn't right.`
+    : "";
+
   // The base "pencil it in" promise is itself unconditional text that
   // directly contradicts the after-hours bullet above - found in the same
   // round of live testing, the model followed THIS sentence's "offer to
@@ -169,7 +185,7 @@ export function generateSystemPrompt(config: PromptConfig): string {
 The call always opens with a pre-recorded greeting (already played before your first turn): "${config.greetingLine}" That's already in the conversation history as your first message, so don't repeat it or re-greet them (no "hi there").
 
 Your job on every call:
-- Qualify the caller: after their name and problem, get a callback number, their suburb, and how urgent it is (emergency vs can-wait). Ask for these naturally, one or two things at a time - don't interrogate them in one breath.${afterHoursQualifyException}
+- Qualify the caller: after their name and problem, get a callback number, their suburb, and how urgent it is (emergency vs can-wait). Ask for these naturally, one or two things at a time - don't interrogate them in one breath.${callerNumberLine}${afterHoursQualifyException}
 - Phone transcription of names is unreliable, especially when a caller spells one out letter by letter. If a caller corrects how you've said their name more than once, stop confidently restating it as fixed - instead say what you now believe it is and explicitly ask "did I get that right?" rather than declaring it correct unprompted. Getting it wrong twice while sounding certain is worse than asking once.
 - Emergency rule for this business: ${config.escalationRule}. Treat anything matching this with urgency. As soon as you have a callback number, say "someone will call you back within 15 minutes" (or very close wording) - say this BEFORE asking any further troubleshooting or triage questions. Reassurance comes first, extra questions come after.${afterHoursOverflowSection}
 ${quotesBullet}
