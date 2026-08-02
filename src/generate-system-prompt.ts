@@ -80,15 +80,6 @@ export function generateSystemPrompt(config: PromptConfig): string {
     ? config.services.map((s) => `- ${s.name}: around $${s.priceLow}-$${s.priceHigh}`).join("\n")
     : "- (no services configured yet)";
 
-  // The suburb list itself is NOT embedded here - with a large service area
-  // (hundreds of suburbs) that would bloat every single API call and, worse,
-  // ask the model to reliably eyeball a huge inline list mid-conversation,
-  // which it won't do consistently. check_service_area (a real tool backed
-  // by the actual array) replaces this - the model asks code, not itself.
-  const serviceAreaSection = config.serviceAreaSuburbs.length
-    ? `\n- This business has a defined service area, but it's too large to list here - the FIRST time a caller states their suburb, call the check_service_area tool with exactly what they said, and follow what it tells you. If it says the area isn't serviced, let them know politely and don't book the job or promise a callback for it - a referral elsewhere is fine. Never guess or rely on your own memory of what's covered.`
-    : "";
-
   const depositLine = config.depositRequired
     ? ` When you call book_appointment, also pass your best estimate of the job's price (in dollars, from the price ranges above) as estimated_price_dollars - the tool will tell you if a deposit is required and, if so, its exact amount; when it does, tell the caller clearly that you're texting them a secure payment link for that deposit to lock the booking in. Never ask for card details out loud, under any circumstance - the payment always happens via the texted link.`
     : "";
@@ -110,6 +101,29 @@ export function generateSystemPrompt(config: PromptConfig): string {
   // entirely, not just extend its failure message.
   const afterHoursOverflow = Boolean(config.offerReferralWhenAfterHours);
   const fullyBookedOverflow = Boolean(config.offerReferralWhenFullyBooked);
+
+  // Suppressed (not just given an extra fallback) when after-hours
+  // overflow is active - real bug found live: whether THIS business
+  // services the caller's suburb is irrelevant once we've already decided
+  // to refer the job to a DIFFERENT business entirely. Left unconditional,
+  // check_service_area fired anyway, came back "not serviced" (correctly,
+  // for a suburb this business genuinely doesn't cover directly), and the
+  // model told the caller to "ring your local council" - abandoning the
+  // referral consent flow it had already started, instead of continuing
+  // it. The suburb still gets captured and used (for the actual overflow
+  // candidate match, done server-side, not by this tool) - this business's
+  // own service area just doesn't gate that.
+  //
+  // The suburb list itself is NOT embedded here - with a large service
+  // area (hundreds of suburbs) that would bloat every single API call
+  // and, worse, ask the model to reliably eyeball a huge inline list
+  // mid-conversation, which it won't do consistently. check_service_area
+  // (a real tool backed by the actual array) replaces this - the model
+  // asks code, not itself.
+  const serviceAreaSection =
+    config.serviceAreaSuburbs.length && !afterHoursOverflow
+      ? `\n- This business has a defined service area, but it's too large to list here - the FIRST time a caller states their suburb, call the check_service_area tool with exactly what they said, and follow what it tells you. If it says the area isn't serviced, let them know politely and don't book the job or promise a callback for it - a referral elsewhere is fine. Never guess or rely on your own memory of what's covered.`
+      : "";
 
   // Shared consent script, used identically from both trigger points so
   // there's exactly one place this wording can drift out of sync. Captures
